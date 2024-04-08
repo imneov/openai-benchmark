@@ -9,6 +9,8 @@ from typing import Optional
 import aiohttp
 import backoff
 
+import json
+
 # TODO: switch to using OpenAI client library once new headers are exposed.
 
 REQUEST_ID_HEADER = "apim-request-id"
@@ -89,10 +91,14 @@ class OAIRequester:
         stats.request_start_time = time.time()
         while stats.calls == 0 or time.time() - stats.request_start_time < MAX_RETRY_SECONDS:
             stats.calls += 1
+            print("[+]",self.url, headers, json.dumps(body),body)
             response = await session.post(self.url, headers=headers, json=body)
+            print("[+]response.status")
+
             stats.response_status_code = response.status
             # capture utilization in all cases, if found
             self._read_utilization(response, stats)
+
             if response.status != 429:
                 break
             if self.backoff and RETRY_AFTER_MS_HEADER in response.headers:

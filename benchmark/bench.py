@@ -5,7 +5,7 @@ import argparse
 import logging
 
 from .loadcmd import load
-from .tokenizecmd import tokenize
+from benchmark.tokenizecmd import tokenize
 
 
 def main():
@@ -48,8 +48,10 @@ def main():
 
     args = parser.parse_args()
     if "func" in args:
+        print("[+]args:",args)
         args.func(args)
     else:
         parser.parse_args("--help")
 
 main()
+

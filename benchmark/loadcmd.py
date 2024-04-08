@@ -39,14 +39,17 @@ class _RequestBuilder:
       self.top_p = top_p
 
       logging.info("warming up prompt cache")
-      _generate_messages(self.model, self.context_tokens, self.max_tokens)
+      _generate_message(self.model, self.context_tokens, self.max_tokens)
 
    def __iter__(self) -> Iterator[dict]:
       return self
 
    def __next__(self) -> (dict, int):
-      messages, messages_tokens = _generate_messages(self.model, self.context_tokens, self.max_tokens)
-      body = {"messages":messages}
+      message, message_tokens = _generate_message(self.model, self.context_tokens, self.max_tokens)
+      body = {
+         "model": "mistralai/Mistral-7B-v0.1",
+         "prompt":message
+      }
       if self.max_tokens is not None:
          body["max_tokens"] = self.max_tokens
       if self.completions is not None:
@@ -59,7 +62,7 @@ class _RequestBuilder:
          body["temperature"] = self.temperature
       if self.top_p is not None:
          body["top_p"] = self.top_p
-      return body, messages_tokens
+      return body, message_tokens
 
 def load(args):
    try:
@@ -69,8 +72,7 @@ def load(args):
        sys.exit(1)
 
    api_key = os.getenv(args.api_key_env)
-   url = args.api_base_endpoint[0] + "/openai/deployments/" + args.deployment + "/chat/completions"
-   url += "?api-version=" + args.api_version
+   url = args.api_base_endpoint[0] + "/v1/completions"
 
    rate_limiter = NoRateLimiter()
    if args.rate is not None and args.rate > 0:
@@ -90,6 +92,7 @@ def load(args):
 
    logging.info(f"using shape profile {args.shape_profile}: context tokens: {context_tokens}, max tokens: {max_tokens}")
 
+   context_tokens = 20
    request_builder = _RequestBuilder("gpt-4-0613", context_tokens,
       max_tokens=max_tokens,
       completions=args.completions,
@@ -97,6 +100,16 @@ def load(args):
       presence_penalty=args.presence_penalty,
       temperature=args.temperature,
       top_p=args.top_p)
+
+   print("[+]++++++++++++++++")
+   request_body, message_tokens = request_builder.__next__()
+   print("[+]", url)
+   print("[+]", request_body)
+   print("[+]", message_tokens)
+   request_body, message_tokens = request_builder.__next__()
+   print("[+]", url)
+   print("[+]", request_body)
+   print("[+]", message_tokens)
 
    logging.info("starting load...")
 
@@ -131,10 +144,10 @@ def _run_load(request_builder: Iterable[dict],
    async def request_func(session:aiohttp.ClientSession):
       nonlocal aggregator
       nonlocal requester
-      request_body, messages_tokens = request_builder.__next__()
+      request_body, message_tokens = request_builder.__next__()
       aggregator.record_new_request()
       stats = await requester.call(session, request_body)
-      stats.context_tokens = messages_tokens
+      stats.context_tokens = message_tokens
       try:
          aggregator.aggregate_request(stats)
       except Exception as e:
@@ -154,42 +167,40 @@ def _run_load(request_builder: Iterable[dict],
    logging.info("finished load test")
 
 CACHED_PROMPT=""
-CACHED_MESSAGES_TOKENS=0
-def _generate_messages(model:str, tokens:int, max_tokens:int=None) -> ([dict], int):
+CACHED_message_tokens=0
+def _generate_message(model:str, tokens:int, max_tokens:int=None) -> (str, int):
    """
-   Generate `messages` array based on tokens and max_tokens.
-   Returns Tuple of messages array and actual context token count.
+   Generate `message` array based on tokens and max_tokens.
+   Returns message and actual context token count.
    """
    global CACHED_PROMPT
-   global CACHED_MESSAGES_TOKENS
+   global CACHED_message_tokens
    try:
       r = wonderwords.RandomWord()
-      messages = [{"role":"user", "content":str(time.time()) + " "}]
-      if max_tokens is not None:
-         messages.append({"role":"user", "content":str(time.time()) + f" write a long essay about life in at least {max_tokens} tokens"})
-      messages_tokens = 0
+      message = str(time.time()) + f" write a long essay about life in at least {max_tokens} tokens"
+      message_tokens = 0
 
       if len(CACHED_PROMPT) > 0:
-         messages[0]["content"] += CACHED_PROMPT
-         messages_tokens = CACHED_MESSAGES_TOKENS
+         message += CACHED_PROMPT
+         message_tokens = CACHED_message_tokens
       else:
          prompt = ""
-         base_prompt = messages[0]["content"]
+         base_prompt = message
          while True:
-            messages_tokens = num_tokens_from_messages(messages, model)
-            remaining_tokens = tokens - messages_tokens
+            message_tokens = num_tokens_from_messages(message, model)
+            remaining_tokens = tokens - message_tokens
             if remaining_tokens <= 0:
                break
             prompt += " ".join(r.random_words(amount=math.ceil(remaining_tokens/4))) + " "
-            messages[0]["content"] = base_prompt + prompt
+            message = base_prompt + prompt
 
          CACHED_PROMPT = prompt
-         CACHED_MESSAGES_TOKENS = messages_tokens
+         CACHED_message_tokens = message_tokens
 
    except Exception as e:
       print (e)
 
-   return (messages, messages_tokens)
+   return (message, message_tokens)
 
 def _validate(args):
     if len(args.api_version) == 0:
